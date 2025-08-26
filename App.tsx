@@ -1,45 +1,171 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
-
-import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
-  SafeAreaProvider,
-  useSafeAreaInsets,
-} from 'react-native-safe-area-context';
+  ActivityIndicator,
+  Linking,
+  StatusBar,
+  StyleSheet,
+  View,
+  Platform,
+  Dimensions,
+} from 'react-native';
+import TrackPlayer, { useActiveTrack } from 'react-native-track-player';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
+import BottomSheet from '@gorhom/bottom-sheet';
 
-function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+import {
+  Button,
+  OptionSheet,
+  ActionSheet,
+  PlayerControls,
+  Progress,
+  Spacer,
+  TrackInfo,
+} from './src/components';
+import { QueueInitialTracksService, SetupService } from './src/services';
+import { SponsorCard } from './src/components/SponsorCard';
 
+export default function App() {
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
+      <GestureHandlerRootView style={styles.gestureContainer}>
+        <Inner />
+      </GestureHandlerRootView>
     </SafeAreaProvider>
   );
 }
 
-function AppContent() {
-  const safeAreaInsets = useSafeAreaInsets();
+const Inner: React.FC = () => {
+  const track = useActiveTrack();
+  const isPlayerReady = useSetupPlayer();
+
+  // options bottom sheet
+  const optionsSheetRef = useRef<BottomSheet>(null);
+  const optionsSheetSnapPoints = useMemo(() => ['40%'], []);
+  const handleOptionsPress = useCallback(() => {
+    optionsSheetRef.current?.snapToIndex(0);
+  }, [optionsSheetRef]);
+
+  // actions bottom sheet
+  const actionsSheetRef = useRef<BottomSheet>(null);
+  const actionsSheetSnapPoints = useMemo(() => ['40%'], []);
+  const handleActionsPress = useCallback(() => {
+    actionsSheetRef.current?.snapToIndex(0);
+  }, [actionsSheetRef]);
+
+  useEffect(() => {
+    function deepLinkHandler(data: { url: string }) {
+      console.log('deepLinkHandler', data.url);
+    }
+
+    // This event will be fired when the app is already open and the notification is clicked
+    const subscription = Linking.addEventListener('url', deepLinkHandler);
+
+    // When you launch the closed app from the notification or any other link
+    Linking.getInitialURL().then((url) => console.log('getInitialURL', url));
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  if (!isPlayerReady) {
+    return (
+      <SafeAreaView style={styles.screenContainer}>
+        <ActivityIndicator />
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <View style={styles.container}>
-      <NewAppScreen
-        templateFileName="App.tsx"
-        safeAreaInsets={safeAreaInsets}
-      />
-    </View>
+    <SafeAreaView style={styles.screenContainer}>
+      <StatusBar barStyle={'light-content'} />
+      <View style={styles.contentContainer}>
+        <View style={styles.topBarContainer}>
+          <Button title="Options" onPress={handleOptionsPress} type="primary" />
+          <Button title="Actions" onPress={handleActionsPress} type="primary" />
+        </View>
+        <TrackInfo track={track} />
+        <Progress live={track?.isLiveStream} />
+        <Spacer />
+        <PlayerControls />
+        <Spacer mode={'expand'} />
+        <SponsorCard />
+      </View>
+      <BottomSheet
+        index={-1}
+        ref={optionsSheetRef}
+        enablePanDownToClose={true}
+        snapPoints={optionsSheetSnapPoints}
+        handleIndicatorStyle={styles.sheetHandle}
+        backgroundStyle={styles.sheetBackgroundContainer}
+      >
+        <OptionSheet />
+      </BottomSheet>
+      <BottomSheet
+        index={-1}
+        ref={actionsSheetRef}
+        enablePanDownToClose={true}
+        snapPoints={actionsSheetSnapPoints}
+        handleIndicatorStyle={styles.sheetHandle}
+        backgroundStyle={styles.sheetBackgroundContainer}
+      >
+        <ActionSheet />
+      </BottomSheet>
+    </SafeAreaView>
   );
-}
+};
 
 const styles = StyleSheet.create({
-  container: {
+  gestureContainer: { flex: 1 },
+  screenContainer: {
     flex: 1,
+    backgroundColor: '#212121',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: Platform.OS === 'web' ? Dimensions.get('window').height : '100%',
+  },
+  contentContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  topBarContainer: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  sheetBackgroundContainer: {
+    backgroundColor: '#181818',
+  },
+  sheetHandle: {
+    backgroundColor: 'white',
   },
 });
 
-export default App;
+function useSetupPlayer() {
+  const [playerReady, setPlayerReady] = useState<boolean>(false);
+
+  useEffect(() => {
+    let unmounted = false;
+    (async () => {
+      await SetupService();
+      if (unmounted) return;
+      setPlayerReady(true);
+      const queue = await TrackPlayer.getQueue();
+      if (unmounted) return;
+      if (queue.length <= 0) {
+        await QueueInitialTracksService();
+      }
+    })();
+    return () => {
+      unmounted = true;
+    };
+  }, []);
+  return playerReady;
+}
